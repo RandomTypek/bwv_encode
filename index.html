@@ -176,10 +176,12 @@ label.f input:disabled{background:#eee;color:#999}
   <h2>How it works</h2>
   <p>Binary Waterfall treats a file as one tall image and slides a window of <code>height</code> rows down it at the speed of the audio. The converter stores your frames back to back and picks the audio sample rate so that exactly one frame's worth of rows scrolls past per 1/fps second. Every export timestamp then lands on a frame boundary.</p>
   <p>Each pixel byte is the low byte of a 32-bit audio sample; the real audio lives in the top three bytes. Binary Waterfall reads the pixel and ignores the rest (<code>x</code> in the colour format), while the audio decoder hears 24-bit sound with the pixel buried 144 dB down.</p>
+  <p>Conversion uses WebCodecs to decode MP4/MOV at full speed (thousands of frames per second); other containers fall back to seeking the video frame by frame, which is much slower.</p>
   <p>Live playback in the app samples the audio clock at an arbitrary phase, so the picture rolls vertically — tick the drift box above to see what that looks like. Export → Video at the same frame rate gives the clean result.</p>
 </section>
 </div>
 
+<script src="mp4box.all.min.js"></script>
 <script>
 (() => {
 const $ = id => document.getElementById(id);
@@ -251,7 +253,8 @@ go.addEventListener('click',convert);
 async function convert(){
   busy=true; updateRate(); prog.classList.add('on'); result.classList.remove('on'); stopPlay();
   const W=+wIn.value|0, H=+hIn.value|0, FPS=+fpsIn.value, NB=color?3:1, PX=W*H*NB, SR=sampleRate();
-  const url=URL.createObjectURL(file);
+  const flip=flipIn.checked;
+  const t0=performance.now();
   try{
     // audio: decode, mix to stereo, resample linearly to SR
     step('Decoding audio…',0);
@@ -261,52 +264,49 @@ async function convert(){
       const buf=await ac.decodeAudioData(await file.arrayBuffer());
       srcRate=buf.sampleRate; L=buf.getChannelData(0); R=buf.numberOfChannels>1?buf.getChannelData(1):L; ac.close();
     }catch(e){ step('No decodable audio track — writing silence',0); await new Promise(r=>setTimeout(r,600)); }
+    const ratio=srcRate/SR;
 
-    const v=await loadVideo(url);
-    if(v.readyState<2) await once(v,'loadeddata',10000);
-    const nFrames=Math.max(1,Math.round(v.duration*FPS));
-    const c=document.createElement('canvas'); c.width=W; c.height=H;
-    const g=c.getContext('2d',{willReadFrequently:true});
-    const parts=[]; const total=nFrames*PX;
-    const ratio=srcRate/SR;                         // source samples per output sample
-    const t0=performance.now();
-
-    for(let k=0;k<nFrames;k++){
-      v.currentTime=Math.min(v.duration-0.001,(k+0.5)/FPS);
-      await once(v,'seeked');
-      g.drawImage(v,0,0,W,H);
-      const d=g.getImageData(0,0,W,H).data;
-      const fw=new Uint32Array(PX);
-      // pixel bytes, in BW row order; optionally stored bottom-up so BW's default flip shows it upright
-      let i=0;
+    let parts=[], nFrames=0;
+    // Build one frame's words from canvas RGBA data
+    const buildFrame=(k,d)=>{
+      const fw=new Uint32Array(PX); let i=0;
       for(let y=0;y<H;y++){
-        const sy=flipIn.checked?H-1-y:y;
+        const sy=flip?H-1-y:y;
         for(let x=0;x<W;x++){
           const p=(sy*W+x)*4;
           if(color){ fw[i++]=d[p]; fw[i++]=d[p+1]; fw[i++]=d[p+2]; }
           else fw[i++]=(d[p]*299+d[p+1]*587+d[p+2]*114+500)/1000|0;
         }
       }
-      // audio: one 32-bit sample per word, top 3 bytes, interleaved L/R
       if(L){
-        const base=k*PX;                            // absolute word index → sample index = word/2
+        const base=k*PX;
         for(let j=0;j<PX;j++){
           const n=(base+j)>>1, ch=(base+j)&1?R:L;
           const pos=n*ratio, i0=pos|0, fr=pos-i0;
           const a=(ch[i0]||0)*(1-fr)+(ch[i0+1]||0)*fr;
-          const s=Math.max(-1,Math.min(1,a))*2147483647|0;
-          fw[j]|=s&0xFFFFFF00;
+          fw[j]|=(Math.max(-1,Math.min(1,a))*2147483647|0)&0xFFFFFF00;
         }
       }
       if(!LE){ const dv=new DataView(fw.buffer); for(let j=0;j<PX;j++) dv.setUint32(j*4,fw[j],true); }
-      parts.push(fw);
-      if(k%5===0||k===nFrames-1){
-        const el=(performance.now()-t0)/1000, eta=el/(k+1)*(nFrames-k-1);
-        step(`Frame ${k+1} / ${nFrames} · ${eta>1?Math.round(eta)+' s left':'almost done'}`,(k+1)/nFrames);
-        await new Promise(r=>requestAnimationFrame(r));
-      }
+      parts[k]=fw;
+    };
+    let lastUi=0;
+    const progress=async(k,n,how)=>{
+      if(performance.now()-lastUi<80 && k<n-1) return;
+      lastUi=performance.now();
+      const el=(performance.now()-t0)/1000, eta=el/(k+1)*(n-k-1);
+      step(`${how} · frame ${k+1} / ${n} · ${eta>1?Math.round(eta)+' s left':'almost done'}`,(k+1)/n);
+      await new Promise(r=>requestAnimationFrame(r));
+    };
+
+    // Fast path: demux with mp4box, decode with WebCodecs. Falls back to seeking the <video> element.
+    try{
+      nFrames=await decodeFast(file,W,H,FPS,buildFrame,progress);
+    }catch(e){
+      console.warn('fast path unavailable, seeking instead:',e.message||e);
+      parts=[]; nFrames=await decodeBySeeking(file,W,H,FPS,buildFrame,progress);
     }
-    v.src='';
+
     out={parts,W,H,FPS,PX,NB,SR,nFrames};
     const blob=new Blob(parts.map(p=>p.buffer),{type:'application/octet-stream'});
     const name=file.name.replace(/\.[^.]+$/,'')+`_${W}x${H}_${FPS}fps.bwv`;
@@ -317,16 +317,106 @@ async function convert(){
       ['Video',`<b>${W}px × ${H}px</b> · colour format <b>${color?'rxxxgxxxbxxx':'wxxx'}</b>`],
       ['Alignment','<b>Frame End</b>'],
       ['Playhead','<b>off</b>'],
-      ['Flip',`vertical <b>${flipIn.checked?'on':'off'}</b> · horizontal <b>off</b>`],
+      ['Flip',`vertical <b>${flip?'on':'off'}</b> · horizontal <b>off</b>`],
       ['Player / export',`<b>${FPS} fps</b>`],
       ['Order','set audio first, then video — audio settings regenerate the file']
     ].map(([a,b])=>`<li><span>${a}</span><span>${b}</span></li>`).join('');
     result.classList.add('on');
-    step(`Done — ${nFrames} frames in ${((performance.now()-t0)/1000).toFixed(0)} s`,1);
+    step(`Done — ${nFrames} frames in ${((performance.now()-t0)/1000).toFixed(1)} s`,1);
     setupPlayer();
   }catch(e){
     step('Conversion failed: '+(e.message||e),0); console.error(e);
-  }finally{ URL.revokeObjectURL(url); busy=false; updateRate(); }
+  }finally{ busy=false; updateRate(); }
+}
+
+// --- WebCodecs path: every frame decoded at full speed, one picked per output slot ---
+async function decodeFast(file,W,H,FPS,buildFrame,progress){
+  if(!('VideoDecoder' in window)||!window.MP4Box) throw new Error('WebCodecs or MP4Box missing');
+  const mp4=MP4Box.createFile();
+  const chunks=[];
+  const info=await new Promise((res,rej)=>{
+    mp4.onError=e=>rej(new Error('mp4box: '+e));
+    mp4.onReady=res;
+    file.arrayBuffer().then(buf=>{
+      const CH=4<<20;
+      for(let off=0;off<buf.byteLength;off+=CH){ const b=buf.slice(off,off+CH); b.fileStart=off; mp4.appendBuffer(b); }
+      mp4.flush();
+      if(!mp4.moov) rej(new Error('not an MP4/MOV container'));
+    }).catch(rej);
+  });
+  const track=info.videoTracks[0];
+  if(!track) throw new Error('no video track');
+  const durS=track.duration/track.timescale;
+  const nFrames=Math.max(1,Math.round(durS*FPS));
+
+  // codec description (avcC / hvcC / vpcC / av1C) for the decoder
+  let description;
+  const trak=mp4.getTrackById(track.id);
+  for(const entry of trak.mdia.minf.stbl.stsd.entries){
+    const box=entry.avcC||entry.hvcC||entry.vpcC||entry.av1C;
+    if(box){ const ds=new DataStream(undefined,0,DataStream.BIG_ENDIAN); box.write(ds); description=new Uint8Array(ds.buffer,8); break; }
+  }
+  const config={codec:track.codec,codedWidth:track.video.width,codedHeight:track.video.height};
+  if(description&&!track.codec.startsWith('vp09')) config.description=description;
+  const sup=await VideoDecoder.isConfigSupported(config);
+  if(!sup.supported) throw new Error('codec not supported by WebCodecs: '+track.codec);
+
+  await new Promise(res=>{
+    mp4.onSamples=(id,user,samples)=>{
+      for(const s of samples) chunks.push(new EncodedVideoChunk({type:s.is_sync?'key':'delta',timestamp:Math.round(1e6*s.cts/s.timescale),duration:Math.round(1e6*s.duration/s.timescale),data:s.data}));
+    };
+    mp4.setExtractionOptions(track.id,null,{nbSamples:500});
+    mp4.start(); mp4.flush(); res();
+  });
+  if(!chunks.length) throw new Error('demuxer produced no samples');
+
+  const c=document.createElement('canvas'); c.width=W; c.height=H;
+  const g=c.getContext('2d',{willReadFrequently:true});
+  let k=0, prev=null, decErr=null;
+  const emit=(frame,slot)=>{ g.drawImage(frame,0,0,W,H); buildFrame(slot,g.getImageData(0,0,W,H).data); };
+  const dec=new VideoDecoder({
+    output:frame=>{
+      const t=frame.timestamp/1e6;
+      while(k<nFrames && prev && (k+0.5)/FPS<t){ emit(prev,k); k++; }
+      if(prev) prev.close(); prev=frame;
+    },
+    error:e=>{decErr=e;}
+  });
+  dec.configure(config);
+  for(let i=0;i<chunks.length;i++){
+    if(decErr) throw decErr;
+    while(dec.decodeQueueSize>40) await new Promise(r=>setTimeout(r,2));
+    dec.decode(chunks[i]);
+    if((i&31)===0) await progress(Math.min(k,nFrames-1),nFrames,'Decoding');
+  }
+  await dec.flush();
+  while(k<nFrames && prev){ emit(prev,k); k++; }
+  if(prev) prev.close(); dec.close();
+  if(decErr) throw decErr;
+  if(k<nFrames) throw new Error('decoder produced no frames');
+  await progress(nFrames-1,nFrames,'Decoding');
+  return nFrames;
+}
+
+// --- Fallback: seek the <video> element frame by frame (works everywhere, slower) ---
+async function decodeBySeeking(file,W,H,FPS,buildFrame,progress){
+  const url=URL.createObjectURL(file);
+  try{
+    const v=await loadVideo(url);
+    if(v.readyState<2) await once(v,'loadeddata',10000);
+    const nFrames=Math.max(1,Math.round(v.duration*FPS));
+    const c=document.createElement('canvas'); c.width=W; c.height=H;
+    const g=c.getContext('2d',{willReadFrequently:true});
+    for(let k=0;k<nFrames;k++){
+      v.currentTime=Math.min(v.duration-0.001,(k+0.5)/FPS);
+      await once(v,'seeked');
+      g.drawImage(v,0,0,W,H);
+      buildFrame(k,g.getImageData(0,0,W,H).data);
+      await progress(k,nFrames,'Seeking');
+    }
+    v.src='';
+    return nFrames;
+  }finally{ URL.revokeObjectURL(url); }
 }
 function step(t,f){ ptext.textContent=t; bar.style.width=(f*100).toFixed(1)+'%'; }
 

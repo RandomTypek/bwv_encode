@@ -4,7 +4,7 @@ Static, client-side converter. Drop a video, get a raw file whose bytes are the 
 with the original audio packed into the upper bytes of each 32-bit sample.
 
 Hosting on GitHub Pages: put `index.html` in the repo root (or `docs/`), enable Pages in
-the repo settings, done. No build step, no dependencies beyond Google Fonts.
+the repo settings, done. No build step. `mp4box.all.min.js` (BSD-3) is bundled for the WebCodecs fast path.
 
 Companion CLI (ffmpeg + numpy): `bw_encode.py`.
 
