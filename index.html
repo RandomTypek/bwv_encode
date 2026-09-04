@@ -300,11 +300,20 @@ async function convert(){
     };
 
     // Fast path: demux with mp4box, decode with WebCodecs. Falls back to seeking the <video> element.
+    let how='WebCodecs';
     try{
       nFrames=await decodeFast(file,W,H,FPS,buildFrame,progress);
     }catch(e){
-      console.warn('fast path unavailable, seeking instead:',e.message||e);
-      parts=[]; nFrames=await decodeBySeeking(file,W,H,FPS,buildFrame,progress);
+      const why=(e.message||String(e)).replace(/^Error: /,'');
+      console.warn('fast path unavailable:',why);
+      parts=[];
+      if('requestVideoFrameCallback' in HTMLVideoElement.prototype){
+        how='2× playback (fast path unavailable: '+why+')';
+        nFrames=await decodeByPlaying(file,W,H,FPS,buildFrame,(k,n)=>progress(k,n,'Playing at 2× — '+why));
+      }else{
+        how='seeking (fast path unavailable: '+why+')';
+        nFrames=await decodeBySeeking(file,W,H,FPS,buildFrame,(k,n)=>progress(k,n,'Seeking — '+why));
+      }
     }
 
     out={parts,W,H,FPS,PX,NB,SR,nFrames};
@@ -322,7 +331,7 @@ async function convert(){
       ['Order','set audio first, then video — audio settings regenerate the file']
     ].map(([a,b])=>`<li><span>${a}</span><span>${b}</span></li>`).join('');
     result.classList.add('on');
-    step(`Done — ${nFrames} frames in ${((performance.now()-t0)/1000).toFixed(1)} s`,1);
+    step(`Done — ${nFrames} frames in ${((performance.now()-t0)/1000).toFixed(1)} s via ${how}`,1);
     setupPlayer();
   }catch(e){
     step('Conversion failed: '+(e.message||e),0); console.error(e);
@@ -387,7 +396,7 @@ async function decodeFast(file,W,H,FPS,buildFrame,progress){
     if(decErr) throw decErr;
     while(dec.decodeQueueSize>40) await new Promise(r=>setTimeout(r,2));
     dec.decode(chunks[i]);
-    if((i&31)===0) await progress(Math.min(k,nFrames-1),nFrames,'Decoding');
+    if((i&31)===0) await progress(Math.round(i/chunks.length*(nFrames-1)),nFrames,'Decoding');
   }
   await dec.flush();
   while(k<nFrames && prev){ emit(prev,k); k++; }
@@ -398,7 +407,38 @@ async function decodeFast(file,W,H,FPS,buildFrame,progress){
   return nFrames;
 }
 
-// --- Fallback: seek the <video> element frame by frame (works everywhere, slower) ---
+// --- Fallback 1: play the video at 2x and grab presented frames (bounded by refresh rate, so ~2x real time) ---
+async function decodeByPlaying(file,W,H,FPS,buildFrame,progress){
+  const url=URL.createObjectURL(file);
+  try{
+    const v=await loadVideo(url);
+    if(v.readyState<2) await once(v,'loadeddata',10000);
+    const nFrames=Math.max(1,Math.round(v.duration*FPS));
+    const c=document.createElement('canvas'); c.width=W; c.height=H;
+    const g=c.getContext('2d',{willReadFrequently:true});
+    let k=0,last=null;
+    const grab=()=>{ g.drawImage(v,0,0,W,H); return g.getImageData(0,0,W,H).data; };
+    await new Promise((res,rej)=>{
+      const tick=(now,md)=>{
+        const t=md.mediaTime; let d=null;
+        while(k<nFrames && (k+0.5)/FPS<=t){ if(!d) d=grab(); buildFrame(k,d); k++; }
+        if(d) last=d;
+        if(k%10===0) progress(k,nFrames);
+        if(k<nFrames && !v.ended) v.requestVideoFrameCallback(tick); else res();
+      };
+      v.onended=()=>res(); v.onerror=()=>rej(new Error('playback failed'));
+      v.requestVideoFrameCallback(tick);
+      v.playbackRate=2; v.play().catch(rej);
+    });
+    v.pause();
+    if(!last) last=grab();
+    while(k<nFrames){ buildFrame(k,last); k++; }
+    v.src='';
+    return nFrames;
+  }finally{ URL.revokeObjectURL(url); }
+}
+
+// --- Fallback 2: seek the <video> element frame by frame (works everywhere, slowest) ---
 async function decodeBySeeking(file,W,H,FPS,buildFrame,progress){
   const url=URL.createObjectURL(file);
   try{
