@@ -1,0 +1,382 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Video to Binary Waterfall</title>
+<meta name="description" content="Turn a video into a raw file that Binary Waterfall plays back as real frames, with the original audio riding in the same bytes. Runs entirely in your browser.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#e3e6ea; --panel:#f6f7f8; --ink:#141a21; --mid:#5c6673; --line:#c5cad1;
+  --blue:#1f5fff; --blue-ink:#0b3fd1; --warn:#b3261e; --ok:#1c7c3f;
+  --sans:"IBM Plex Sans",system-ui,sans-serif; --mono:"IBM Plex Mono",ui-monospace,monospace;
+}
+*{box-sizing:border-box}
+html{background:var(--bg);color:var(--ink);font:400 16px/1.5 var(--sans)}
+body{margin:0;min-height:100vh}
+a{color:var(--blue-ink)}
+button,input,select{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+
+.wrap{max-width:1180px;margin:0 auto;padding:40px 24px 80px}
+header{margin-bottom:36px;max-width:720px}
+h1{font-size:clamp(28px,4.2vw,44px);line-height:1.08;font-weight:600;letter-spacing:-.02em;margin:0 0 14px}
+h1 .strip{display:inline-block;vertical-align:-.12em;width:.9em;height:.9em;margin-right:.18em;
+  background:repeating-linear-gradient(180deg,#141a21 0 3px,#8a9099 3px 5px,#e3e6ea 5px 7px,#5c6673 7px 9px)}
+header p{margin:0;color:var(--mid);max-width:60ch}
+
+.grid{display:grid;grid-template-columns:minmax(0,440px) minmax(0,1fr);gap:28px;align-items:start}
+@media (max-width:860px){.grid{grid-template-columns:1fr}}
+
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:6px}
+.panel > *{padding:0 20px}
+.panel h2{font-size:15px;font-weight:600;margin:0;padding:14px 20px;border-bottom:1px solid var(--line)}
+.panel .body{padding:18px 20px 20px}
+
+/* drop zone */
+.drop{position:relative;display:block;border:1.5px dashed var(--line);border-radius:6px;padding:26px 18px;text-align:center;cursor:pointer;background:#fff;transition:border-color .15s,background .15s}
+.drop.over{border-color:var(--blue);background:#eef2ff}
+.drop input{position:absolute;inset:0;opacity:0;cursor:pointer}
+.drop strong{display:block;font-weight:500}
+.drop span{color:var(--mid);font-size:14px}
+.filemeta{margin:10px 0 0;font:500 13px/1.5 var(--mono);color:var(--mid);min-height:1.5em}
+
+/* fields */
+.row{display:grid;grid-template-columns:1fr 1fr;gap:12px 14px;margin-top:16px}
+.row.one{grid-template-columns:1fr}
+label.f{display:block;font-size:13px;color:var(--mid)}
+label.f input,label.f select{display:block;width:100%;margin-top:4px;padding:8px 10px;border:1px solid var(--line);border-radius:4px;background:#fff;font-family:var(--mono);font-size:14px}
+label.f input:disabled{background:#eee;color:#999}
+.seg{display:flex;border:1px solid var(--line);border-radius:4px;overflow:hidden;margin-top:4px}
+.seg button{flex:1;padding:8px;border:0;background:#fff;cursor:pointer;color:var(--mid)}
+.seg button[aria-pressed=true]{background:var(--ink);color:#fff}
+.check{display:flex;gap:8px;align-items:center;font-size:14px;margin-top:16px}
+.check input{width:16px;height:16px;margin:0;accent-color:var(--blue)}
+.hint{font-size:13px;color:var(--mid);margin:6px 0 0}
+.hint.bad{color:var(--warn)}
+.linkbtn{background:none;border:0;padding:0;color:var(--blue-ink);text-decoration:underline;cursor:pointer;font-size:13px}
+
+/* rate readout */
+.rate{margin-top:18px;padding:12px 14px;border-radius:4px;background:#fff;border:1px solid var(--line);font-family:var(--mono);font-size:13px;line-height:1.7}
+.rate b{font-weight:500;color:var(--ink)}
+.rate.bad{border-color:var(--warn)}
+.rate .num{font-size:22px;font-weight:500;display:block;line-height:1.2;margin-bottom:2px}
+
+.cta{margin-top:18px;width:100%;padding:12px 16px;border:0;border-radius:4px;background:var(--blue);color:#fff;font-weight:600;cursor:pointer}
+.cta:disabled{background:#aeb6c2;cursor:default}
+.cta:not(:disabled):hover{background:var(--blue-ink)}
+
+/* progress */
+.prog{margin-top:14px;display:none}
+.prog.on{display:block}
+.bar{height:6px;background:#dfe3e8;border-radius:3px;overflow:hidden}
+.bar i{display:block;height:100%;width:0;background:var(--blue);transition:width .12s}
+.prog p{margin:8px 0 0;font:500 13px/1.5 var(--mono);color:var(--mid)}
+
+/* result */
+.result{display:none}
+.result.on{display:block}
+.dl{display:inline-block;padding:10px 16px;border-radius:4px;background:var(--ink);color:#fff;text-decoration:none;font-weight:600}
+.dl small{font-weight:400;opacity:.75;margin-left:8px;font-family:var(--mono);font-size:13px}
+.settings{margin:18px 0 0;padding:0;list-style:none;font-family:var(--mono);font-size:13.5px;border-top:1px solid var(--line)}
+.settings li{display:grid;grid-template-columns:120px 1fr;gap:12px;padding:8px 0;border-bottom:1px solid var(--line)}
+.settings li span:first-child{color:var(--mid);font-family:var(--sans)}
+.settings b{font-weight:500}
+.attrib{margin:16px 0 0;font-size:13px;color:var(--mid)}
+.attrib code{font-family:var(--mono);font-size:12.5px;background:#fff;border:1px solid var(--line);padding:1px 5px;border-radius:3px}
+
+/* preview / player */
+.stage{background:#111;border-radius:6px 6px 0 0;display:grid;place-items:center;min-height:320px;padding:20px}
+.stage canvas{image-rendering:pixelated;max-width:100%;width:100%;height:auto;background:#000}
+.stage .empty{color:#8a9099;font-size:14px;text-align:center;max-width:36ch}
+.controls{display:flex;gap:12px;align-items:center;padding:12px 16px;font-size:14px;flex-wrap:wrap}
+.controls button{padding:7px 12px;border:1px solid var(--line);border-radius:4px;background:#fff;cursor:pointer}
+.controls input[type=range]{flex:1;min-width:120px;accent-color:var(--blue)}
+.controls .t{font-family:var(--mono);font-size:13px;color:var(--mid);min-width:9ch;text-align:right}
+.controls .jit{display:flex;gap:6px;align-items:center;color:var(--mid);font-size:13px}
+.controls .jit input{accent-color:var(--blue)}
+
+.how{margin-top:28px;max-width:66ch;color:var(--mid);font-size:14.5px}
+.how h2{font-size:15px;color:var(--ink);margin:0 0 8px}
+.how p{margin:0 0 10px}
+.how code{font-family:var(--mono);font-size:13px}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <h1><i class="strip" aria-hidden="true"></i>Video in. Bytes Binary Waterfall plays as video out.</h1>
+  <p>Drop a video and get a raw file whose bytes, viewed in <a href="https://github.com/nimaid/binary-waterfall">Binary Waterfall</a>, are the actual frames — with the original soundtrack packed into the same bytes. Nothing is uploaded; the conversion runs in this tab.</p>
+</header>
+
+<div class="grid">
+<section class="panel" aria-labelledby="in-h">
+  <h2 id="in-h">Source and layout</h2>
+  <div class="body">
+    <label class="drop" id="drop">
+      <input type="file" id="file" accept="video/*">
+      <strong>Choose a video or drop it here</strong>
+      <span>mp4, webm, mov — anything your browser can play</span>
+    </label>
+    <p class="filemeta" id="filemeta"></p>
+
+    <div class="row one">
+      <label class="f">Colour
+        <div class="seg" role="group" aria-label="Colour mode">
+          <button type="button" id="m-gray" aria-pressed="true">Grayscale</button>
+          <button type="button" id="m-rgb" aria-pressed="false">RGB</button>
+        </div>
+      </label>
+    </div>
+    <div class="row">
+      <label class="f">Width (px)<input type="number" id="w" value="64" min="4" step="1"></label>
+      <label class="f">Height (px)<input type="number" id="h" value="48" min="4" step="1"></label>
+      <label class="f">Frame rate
+        <select id="fps"><option>25</option><option>20</option><option>10</option><option>5</option></select>
+      </label>
+      <label class="f">Sample rate limit (Hz)<input type="number" id="srmax" value="192000" min="1000" step="1000"></label>
+    </div>
+    <p class="hint"><button type="button" class="linkbtn" id="fit">Use the largest size that fits my sample rate limit</button> — keeps the video's aspect ratio.</p>
+    <label class="check"><input type="checkbox" id="flip" checked> Store frames upside-down (Binary Waterfall flips vertically by default)</label>
+
+    <div class="rate" id="rate"></div>
+
+    <button class="cta" id="go" disabled>Convert</button>
+    <div class="prog" id="prog"><div class="bar"><i id="bar"></i></div><p id="ptext"></p></div>
+  </div>
+</section>
+
+<div>
+<section class="panel" aria-labelledby="pv-h">
+  <h2 id="pv-h">Playback check</h2>
+  <div class="stage" id="stage"><p class="empty">The converted file plays here exactly the way a Binary Waterfall export would, so you can see it lands on whole frames before you download.</p><canvas id="cv" hidden></canvas></div>
+  <div class="controls" id="ctl" hidden>
+    <button type="button" id="play">Play</button>
+    <input type="range" id="seek" min="0" max="0" value="0" step="1" aria-label="Frame">
+    <span class="t" id="tc">0 / 0</span>
+    <label class="jit"><input type="checkbox" id="jit"> simulate live-view drift</label>
+  </div>
+</section>
+
+<section class="panel result" id="result" aria-labelledby="out-h" style="margin-top:28px">
+  <h2 id="out-h">Your file and the settings to open it</h2>
+  <div class="body">
+    <a class="dl" id="dl" href="#" download>Download file<small id="dlsize"></small></a>
+    <ul class="settings" id="settings"></ul>
+    <p class="attrib">Binary Waterfall asks for this credit in anything you publish: <code>Made with the help of Binary Waterfall: https://github.com/nimaid/binary-waterfall</code></p>
+  </div>
+</section>
+</div>
+</div>
+
+<section class="how">
+  <h2>How it works</h2>
+  <p>Binary Waterfall treats a file as one tall image and slides a window of <code>height</code> rows down it at the speed of the audio. The converter stores your frames back to back and picks the audio sample rate so that exactly one frame's worth of rows scrolls past per 1/fps second. Every export timestamp then lands on a frame boundary.</p>
+  <p>Each pixel byte is the low byte of a 32-bit audio sample; the real audio lives in the top three bytes. Binary Waterfall reads the pixel and ignores the rest (<code>x</code> in the colour format), while the audio decoder hears 24-bit sound with the pixel buried 144 dB down.</p>
+  <p>Live playback in the app samples the audio clock at an arbitrary phase, so the picture rolls vertically — tick the drift box above to see what that looks like. Export → Video at the same frame rate gives the clean result.</p>
+</section>
+</div>
+
+<script>
+(() => {
+const $ = id => document.getElementById(id);
+const fileIn=$('file'), drop=$('drop'), meta=$('filemeta'), wIn=$('w'), hIn=$('h'), fpsIn=$('fps'), srIn=$('srmax'),
+      flipIn=$('flip'), rate=$('rate'), go=$('go'), prog=$('prog'), bar=$('bar'), ptext=$('ptext'),
+      result=$('result'), dl=$('dl'), dlsize=$('dlsize'), settingsUl=$('settings'),
+      stage=$('stage'), cv=$('cv'), ctl=$('ctl'), playBtn=$('play'), seek=$('seek'), tc=$('tc'), jit=$('jit');
+
+let color=false, file=null, vidW=0, vidH=0, duration=0, out=null, busy=false;
+const LE = new Uint8Array(new Uint32Array([1]).buffer)[0] === 1;
+
+// ---------- layout maths ----------
+const words = () => (+wIn.value|0)*(+hIn.value|0)*(color?3:1);          // 32-bit words per frame
+const sampleRate = () => words()*(+fpsIn.value)/2;                       // stereo
+function updateRate(){
+  const sr=sampleRate(), lim=+srIn.value, w=+wIn.value|0, h=+hIn.value|0;
+  const ok = sr<=lim && Number.isInteger(sr) && w>=4 && h>=4;
+  rate.classList.toggle('bad',!ok);
+  const bytes = duration ? Math.round(duration*fpsIn.value)*words()*4 : 0;
+  rate.innerHTML = `<span class="num">${sr.toLocaleString()} Hz</span>`
+    + `audio sample rate this layout needs (32-bit stereo)<br>`
+    + (sr>lim ? `<b style="color:var(--warn)">above your limit — shrink the frame or lower the fps</b><br>` : '')
+    + (!Number.isInteger(sr) ? `<b style="color:var(--warn)">width × height × fps must be even</b><br>` : '')
+    + `colour format <b>${color?'rxxxgxxxbxxx':'wxxx'}</b>`
+    + (bytes ? ` · output about <b>${fmtSize(bytes)}</b>` : '');
+  go.disabled = !(file && ok) || busy;
+}
+function fmtSize(b){ return b<1e6 ? (b/1e3).toFixed(0)+' kB' : b<1e9 ? (b/1e6).toFixed(1)+' MB' : (b/1e9).toFixed(2)+' GB'; }
+function fit(){
+  const budget = +srIn.value*2/+fpsIn.value/(color?3:1);                 // pixels per frame
+  const ar = vidW&&vidH ? vidW/vidH : 4/3;
+  let w = Math.floor(Math.sqrt(budget*ar)); w -= w%2;
+  let h = Math.floor(w/ar); h -= h%2;
+  while (w*h>budget && w>4){ w-=2; h=Math.floor(w/ar); h-=h%2; }
+  wIn.value=w; hIn.value=h; updateRate();
+}
+[wIn,hIn,fpsIn,srIn].forEach(el=>el.addEventListener('input',updateRate));
+$('fit').addEventListener('click',fit);
+$('m-gray').addEventListener('click',()=>setColor(false));
+$('m-rgb').addEventListener('click',()=>setColor(true));
+function setColor(c){ color=c; $('m-gray').setAttribute('aria-pressed',!c); $('m-rgb').setAttribute('aria-pressed',c); updateRate(); }
+
+// ---------- file intake ----------
+['dragenter','dragover'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.add('over');}));
+['dragleave','drop'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.remove('over');}));
+drop.addEventListener('drop',ev=>{ const f=ev.dataTransfer.files[0]; if(f) setFile(f); });
+fileIn.addEventListener('change',()=>{ if(fileIn.files[0]) setFile(fileIn.files[0]); });
+
+async function setFile(f){
+  file=f; meta.textContent='Reading…'; go.disabled=true;
+  try{
+    const v=await loadVideo(URL.createObjectURL(f));
+    vidW=v.videoWidth; vidH=v.videoHeight; duration=v.duration;
+    meta.textContent=`${f.name} · ${vidW}×${vidH} · ${duration.toFixed(1)} s`;
+    v.src=''; 
+  }catch(e){ meta.textContent=`Could not decode "${f.name}" — this browser can't play that format.`; file=null; }
+  updateRate();
+}
+function loadVideo(url){
+  return new Promise((res,rej)=>{
+    const v=document.createElement('video'); v.muted=true; v.playsInline=true; v.preload='auto';
+    v.onloadedmetadata=()=>res(v); v.onerror=()=>rej(new Error('decode')); v.src=url;
+  });
+}
+const once=(el,ev,ms=3000)=>new Promise(r=>{ const t=setTimeout(r,ms); el.addEventListener(ev,()=>{clearTimeout(t);r();},{once:true}); });
+
+// ---------- conversion ----------
+go.addEventListener('click',convert);
+async function convert(){
+  busy=true; updateRate(); prog.classList.add('on'); result.classList.remove('on'); stopPlay();
+  const W=+wIn.value|0, H=+hIn.value|0, FPS=+fpsIn.value, NB=color?3:1, PX=W*H*NB, SR=sampleRate();
+  const url=URL.createObjectURL(file);
+  try{
+    // audio: decode, mix to stereo, resample linearly to SR
+    step('Decoding audio…',0);
+    let L=null,R=null,srcRate=48000;
+    try{
+      const ac=new (window.AudioContext||window.webkitAudioContext)();
+      const buf=await ac.decodeAudioData(await file.arrayBuffer());
+      srcRate=buf.sampleRate; L=buf.getChannelData(0); R=buf.numberOfChannels>1?buf.getChannelData(1):L; ac.close();
+    }catch(e){ step('No decodable audio track — writing silence',0); await new Promise(r=>setTimeout(r,600)); }
+
+    const v=await loadVideo(url);
+    if(v.readyState<2) await once(v,'loadeddata',10000);
+    const nFrames=Math.max(1,Math.round(v.duration*FPS));
+    const c=document.createElement('canvas'); c.width=W; c.height=H;
+    const g=c.getContext('2d',{willReadFrequently:true});
+    const parts=[]; const total=nFrames*PX;
+    const ratio=srcRate/SR;                         // source samples per output sample
+    const t0=performance.now();
+
+    for(let k=0;k<nFrames;k++){
+      v.currentTime=Math.min(v.duration-0.001,(k+0.5)/FPS);
+      await once(v,'seeked');
+      g.drawImage(v,0,0,W,H);
+      const d=g.getImageData(0,0,W,H).data;
+      const fw=new Uint32Array(PX);
+      // pixel bytes, in BW row order; optionally stored bottom-up so BW's default flip shows it upright
+      let i=0;
+      for(let y=0;y<H;y++){
+        const sy=flipIn.checked?H-1-y:y;
+        for(let x=0;x<W;x++){
+          const p=(sy*W+x)*4;
+          if(color){ fw[i++]=d[p]; fw[i++]=d[p+1]; fw[i++]=d[p+2]; }
+          else fw[i++]=(d[p]*299+d[p+1]*587+d[p+2]*114+500)/1000|0;
+        }
+      }
+      // audio: one 32-bit sample per word, top 3 bytes, interleaved L/R
+      if(L){
+        const base=k*PX;                            // absolute word index → sample index = word/2
+        for(let j=0;j<PX;j++){
+          const n=(base+j)>>1, ch=(base+j)&1?R:L;
+          const pos=n*ratio, i0=pos|0, fr=pos-i0;
+          const a=(ch[i0]||0)*(1-fr)+(ch[i0+1]||0)*fr;
+          const s=Math.max(-1,Math.min(1,a))*2147483647|0;
+          fw[j]|=s&0xFFFFFF00;
+        }
+      }
+      if(!LE){ const dv=new DataView(fw.buffer); for(let j=0;j<PX;j++) dv.setUint32(j*4,fw[j],true); }
+      parts.push(fw);
+      if(k%5===0||k===nFrames-1){
+        const el=(performance.now()-t0)/1000, eta=el/(k+1)*(nFrames-k-1);
+        step(`Frame ${k+1} / ${nFrames} · ${eta>1?Math.round(eta)+' s left':'almost done'}`,(k+1)/nFrames);
+        await new Promise(r=>requestAnimationFrame(r));
+      }
+    }
+    v.src='';
+    out={parts,W,H,FPS,PX,NB,SR,nFrames};
+    const blob=new Blob(parts.map(p=>p.buffer),{type:'application/octet-stream'});
+    const name=file.name.replace(/\.[^.]+$/,'')+`_${W}x${H}_${FPS}fps.bwv`;
+    if(dl.href.startsWith('blob:')) URL.revokeObjectURL(dl.href);
+    dl.href=URL.createObjectURL(blob); dl.download=name; dlsize.textContent=fmtSize(blob.size);
+    settingsUl.innerHTML=[
+      ['Audio','<b>2</b> (stereo) · <b>32-bit</b> · <b>'+SR.toLocaleString()+' Hz</b> · volume 100%'],
+      ['Video',`<b>${W}px × ${H}px</b> · colour format <b>${color?'rxxxgxxxbxxx':'wxxx'}</b>`],
+      ['Alignment','<b>Frame End</b>'],
+      ['Playhead','<b>off</b>'],
+      ['Flip',`vertical <b>${flipIn.checked?'on':'off'}</b> · horizontal <b>off</b>`],
+      ['Player / export',`<b>${FPS} fps</b>`],
+      ['Order','set audio first, then video — audio settings regenerate the file']
+    ].map(([a,b])=>`<li><span>${a}</span><span>${b}</span></li>`).join('');
+    result.classList.add('on');
+    step(`Done — ${nFrames} frames in ${((performance.now()-t0)/1000).toFixed(0)} s`,1);
+    setupPlayer();
+  }catch(e){
+    step('Conversion failed: '+(e.message||e),0); console.error(e);
+  }finally{ URL.revokeObjectURL(url); busy=false; updateRate(); }
+}
+function step(t,f){ ptext.textContent=t; bar.style.width=(f*100).toFixed(1)+'%'; }
+
+// ---------- player: renders the output bytes the way BW does ----------
+let raf=null, playing=false, lastT=0, acc=0, ctx=null, img=null;
+function setupPlayer(){
+  const {W,H,nFrames}=out;
+  cv.width=W; cv.height=H; cv.hidden=false; stage.querySelector('.empty')?.remove();
+  ctl.hidden=false; ctx=cv.getContext('2d'); img=ctx.createImageData(W,H);
+  seek.max=nFrames-1; seek.value=0; drawAt(0);
+}
+// Draw the window of H rows starting at absolute row `row` (fractional rows are what a live view shows)
+function drawAt(row){
+  const {W,H,PX,NB,parts,nFrames}=out; const rowWords=W*NB; const totalRows=nFrames*H;
+  const start=Math.round(row); const px=img.data; let o=0;
+  for(let y=0;y<H;y++){
+    const sr=flipIn.checked?H-1-y:y;   // BW's vertical flip
+    const rr=start+sr;
+    for(let x=0;x<W;x++){
+      let R=0,G=0,B=0;
+      if(rr>=0&&rr<totalRows){
+        const fi=(rr/H)|0, wi=(rr%H)*rowWords+x*NB, fw=parts[fi];
+        if(color){ R=fw[wi]&255; G=fw[wi+1]&255; B=fw[wi+2]&255; } else { R=G=B=fw[wi]&255; }
+      }
+      px[o++]=R; px[o++]=G; px[o++]=B; px[o++]=255;
+    }
+  }
+  ctx.putImageData(img,0,0);
+}
+function showFrame(k, drift){
+  const {H,FPS}=out; k=Math.max(0,Math.min(out.nFrames-1,k));
+  seek.value=Math.floor(k); tc.textContent=`${Math.floor(k)+1} / ${out.nFrames}`;
+  drawAt(Math.floor(k)*H + (drift?drift*H:0));
+}
+seek.addEventListener('input',()=>{ stopPlay(); showFrame(+seek.value); });
+playBtn.addEventListener('click',()=>playing?stopPlay():startPlay());
+function startPlay(){ playing=true; playBtn.textContent='Pause'; lastT=performance.now(); acc=+seek.value; raf=requestAnimationFrame(tick); }
+function stopPlay(){ playing=false; playBtn.textContent='Play'; if(raf) cancelAnimationFrame(raf); raf=null; }
+function tick(t){
+  if(!playing) return;
+  acc+=(t-lastT)/1000*out.FPS; lastT=t;
+  if(acc>=out.nFrames){ acc=0; }
+  // live-view simulation: the app samples the audio clock at a slowly drifting phase → the picture rolls
+  const drift = jit.checked ? ((t/1000*2.5)%1) : 0;
+  showFrame(acc, drift);
+  raf=requestAnimationFrame(tick);
+}
+
+updateRate();
+})();
+</script>
+</body>
+</html>
