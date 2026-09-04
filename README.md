@@ -1,5 +1,7 @@
 # Video → Binary Waterfall
 
+Live at https://randomtypek.github.io/bwv_encode/
+
 Static, client-side converter. Drop a video, get a raw file whose bytes are the frames,
 with the original audio packed into the upper bytes of each 32-bit sample.
 
