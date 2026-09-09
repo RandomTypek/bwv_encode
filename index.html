@@ -110,6 +110,7 @@ label.f input:disabled{background:#eee;color:#999}
 <header>
   <h1><i class="strip" aria-hidden="true"></i>Video in. Bytes Binary Waterfall plays as video out.</h1>
   <p>Drop a video and get a raw file whose bytes, viewed in <a href="https://github.com/nimaid/binary-waterfall">Binary Waterfall</a>, are the actual frames — with the original soundtrack packed into the same bytes. Nothing is uploaded; the conversion runs in this tab.</p>
+  <nav style="margin-top:10px;font-size:14px"><a href="corrupt.html">have a file already? take it to the corruptor →</a></nav>
 </header>
 
 <div class="grid">
@@ -318,7 +319,7 @@ async function convert(){
 
     out={parts,W,H,FPS,PX,NB,SR,nFrames};
     const blob=new Blob(parts.map(p=>p.buffer),{type:'application/octet-stream'});
-    const name=file.name.replace(/\.[^.]+$/,'')+`_${W}x${H}_${FPS}fps.bwv`;
+    const name=file.name.replace(/\.[^.]+$/,'')+`_${W}x${H}_${FPS}fps_${color?'rgb':'gray'}.bwv`;
     if(dl.href.startsWith('blob:')) URL.revokeObjectURL(dl.href);
     dl.href=URL.createObjectURL(blob); dl.download=name; dlsize.textContent=fmtSize(blob.size);
     settingsUl.innerHTML=[

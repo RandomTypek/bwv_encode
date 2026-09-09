@@ -1,0 +1,567 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Binary Waterfall video corruptor</title>
+<meta name="description" content="Structure-aware glitch tool for Binary Waterfall video files: bend the pixel bytes, the audio bytes, the row alignment or the frame stride, and watch it live.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#e3e6ea; --panel:#f6f7f8; --ink:#141a21; --mid:#5c6673; --line:#c5cad1;
+  --blue:#1f5fff; --blue-ink:#0b3fd1; --warn:#b3261e;
+  --sans:"IBM Plex Sans",system-ui,sans-serif; --mono:"IBM Plex Mono",ui-monospace,monospace;
+}
+*{box-sizing:border-box}
+html{background:var(--bg);color:var(--ink);font:400 16px/1.5 var(--sans)}
+body{margin:0}
+a{color:var(--blue-ink)}
+button,input,select{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+
+.wrap{max-width:1180px;margin:0 auto;padding:36px 24px 80px}
+header{margin-bottom:28px;max-width:720px}
+h1{font-size:clamp(26px,4vw,40px);line-height:1.08;font-weight:600;letter-spacing:-.02em;margin:0 0 12px}
+h1 .strip{display:inline-block;vertical-align:-.12em;width:.9em;height:.9em;margin-right:.18em;
+  background:repeating-linear-gradient(180deg,#141a21 0 3px,#8a9099 3px 5px,#e3e6ea 5px 7px,#5c6673 7px 9px)}
+header p{margin:0;color:var(--mid);max-width:62ch}
+header nav{margin-top:10px;font-size:14px}
+
+.grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,420px);gap:26px;align-items:start}
+@media (max-width:900px){.grid{grid-template-columns:1fr}}
+
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:6px;margin-bottom:22px}
+.panel h2{font-size:15px;font-weight:600;margin:0;padding:13px 18px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;gap:10px}
+.panel h2 em{font-style:normal;font-weight:400;font-size:13px;color:var(--mid);font-family:var(--mono)}
+.body{padding:16px 18px 18px}
+
+.drop{position:relative;display:block;border:1.5px dashed var(--line);border-radius:6px;padding:22px 16px;text-align:center;cursor:pointer;background:#fff}
+.drop.over{border-color:var(--blue);background:#eef2ff}
+.drop input{position:absolute;inset:0;opacity:0;cursor:pointer}
+.drop strong{display:block;font-weight:500}
+.drop span{color:var(--mid);font-size:13.5px}
+.meta{margin:10px 0 0;font:500 13px/1.6 var(--mono);color:var(--mid)}
+.meta.bad{color:var(--warn)}
+
+.row{display:grid;grid-template-columns:1fr 1fr;gap:10px 12px;margin-top:14px}
+.row.three{grid-template-columns:1fr 1fr 1fr}
+label.f{display:block;font-size:13px;color:var(--mid)}
+label.f input,label.f select{display:block;width:100%;margin-top:4px;padding:7px 9px;border:1px solid var(--line);border-radius:4px;background:#fff;font-family:var(--mono);font-size:14px}
+
+/* stage */
+.stage{background:#0d0d0f;border-radius:6px 6px 0 0;display:grid;place-items:center;min-height:380px;padding:18px}
+.stage canvas{image-rendering:pixelated;width:100%;height:auto;background:#000}
+.stage .empty{color:#8a9099;font-size:14px;text-align:center;max-width:38ch}
+.controls{display:flex;gap:10px;align-items:center;padding:11px 16px;flex-wrap:wrap;border-top:1px solid var(--line)}
+.controls button{padding:7px 12px;border:1px solid var(--line);border-radius:4px;background:#fff;cursor:pointer}
+.controls input[type=range]{flex:1;min-width:140px;accent-color:var(--blue)}
+.controls .t{font-family:var(--mono);font-size:13px;color:var(--mid);min-width:10ch;text-align:right}
+
+/* effects */
+.fx{border-bottom:1px solid var(--line)}
+.fx:last-child{border-bottom:0}
+.fx > .head{display:flex;align-items:center;gap:10px;padding:11px 18px;cursor:pointer;user-select:none}
+.fx > .head input{width:16px;height:16px;margin:0;accent-color:var(--blue);flex:none}
+.fx > .head b{font-weight:500;font-size:14.5px;flex:1}
+.fx > .head .tag{font:500 11px/1 var(--mono);color:var(--mid);border:1px solid var(--line);border-radius:99px;padding:4px 7px;background:#fff}
+.fx .ctrls{display:none;padding:0 18px 14px 44px}
+.fx.on .ctrls{display:block}
+.fx.on > .head b{color:var(--ink)}
+.fx p.d{margin:0 0 10px;font-size:13px;color:var(--mid)}
+.sl{display:grid;grid-template-columns:1fr auto;gap:4px 10px;align-items:center;margin-top:8px;font-size:13px;color:var(--mid)}
+.sl input[type=range]{grid-column:1/-1;width:100%;accent-color:var(--blue);margin:0}
+.sl output{font-family:var(--mono);font-size:13px;color:var(--ink)}
+.sl select{padding:5px 7px;border:1px solid var(--line);border-radius:4px;background:#fff;font-family:var(--mono);font-size:13px}
+
+.actions{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.cta{padding:11px 16px;border:0;border-radius:4px;background:var(--blue);color:#fff;font-weight:600;cursor:pointer}
+.cta:disabled{background:#aeb6c2;cursor:default}
+.cta:not(:disabled):hover{background:var(--blue-ink)}
+.ghost{padding:11px 14px;border:1px solid var(--line);border-radius:4px;background:#fff;cursor:pointer}
+.prog{margin-top:12px;display:none}
+.prog.on{display:block}
+.bar{height:6px;background:#dfe3e8;border-radius:3px;overflow:hidden}
+.bar i{display:block;height:100%;width:0;background:var(--blue);transition:width .1s}
+.prog p{margin:8px 0 0;font:500 13px/1.5 var(--mono);color:var(--mid)}
+.note{font-size:13px;color:var(--mid);margin:12px 0 0}
+.presets{display:flex;gap:8px;flex-wrap:wrap;margin-top:2px}
+.presets button{padding:6px 10px;border:1px solid var(--line);border-radius:99px;background:#fff;cursor:pointer;font-size:13px}
+.presets button:hover{border-color:var(--blue);color:var(--blue-ink)}
+.how{margin-top:26px;max-width:66ch;color:var(--mid);font-size:14.5px}
+.how h2{font-size:15px;color:var(--ink);margin:0 0 8px}
+.how code{font-family:var(--mono);font-size:13px}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <h1><i class="strip" aria-hidden="true"></i>Corrupt the waterfall on purpose.</h1>
+  <p>A glitch tool that knows the layout of the files the converter makes: which byte is the picture, which three are the sound, where a row ends and a frame begins. So the damage lands where you aim it instead of turning everything to static.</p>
+  <nav><a href="index.html">← back to the converter</a></nav>
+</header>
+
+<div class="grid">
+<div>
+  <section class="panel" aria-labelledby="pv" style="order:2">
+    <h2 id="pv">Preview <em id="pvmeta"></em></h2>
+    <div class="stage" id="stage"><p class="empty">Load a .bwv file to see it here. Every change is applied live — the file on disk isn't touched until you export.</p><canvas id="cv" hidden></canvas></div>
+    <div class="controls" id="ctl" hidden>
+      <button type="button" id="play">Play</button>
+      <input type="range" id="seek" min="0" max="0" value="0" step="1" aria-label="Frame">
+      <span class="t" id="tc">0 / 0</span>
+      <button type="button" id="ab" title="Toggle between original and corrupted">A/B</button>
+    </div>
+  </section>
+
+  <section class="panel" aria-labelledby="src">
+    <h2 id="src">Source file</h2>
+    <div class="body">
+      <label class="drop" id="drop">
+        <input type="file" id="file" accept=".bwv,application/octet-stream">
+        <strong>Choose a .bwv file or drop it here</strong>
+        <span>the one the converter gave you — size and frame rate are read from its name</span>
+      </label>
+      <p class="meta" id="meta"></p>
+      <div class="row three">
+        <label class="f">Width<input type="number" id="w" value="64" min="4"></label>
+        <label class="f">Height<input type="number" id="h" value="48" min="4"></label>
+        <label class="f">Frame rate<input type="number" id="fps" value="25" min="1"></label>
+      </div>
+      <div class="row">
+        <label class="f">Colour format
+          <select id="fmt"><option value="1">wxxx (grayscale)</option><option value="3">rxxxgxxxbxxx (RGB)</option></select>
+        </label>
+        <label class="f">Vertical flip
+          <select id="flip"><option value="1">on (converter default)</option><option value="0">off</option></select>
+        </label>
+      </div>
+    </div>
+  </section>
+</div>
+
+<div>
+  <section class="panel">
+    <h2>Effects <em id="seedwrap">seed <input id="seed" value="1" style="width:5ch;border:1px solid var(--line);border-radius:3px;padding:1px 4px;font-family:var(--mono);font-size:12px"></em></h2>
+    <div class="presets" style="padding:12px 18px 0">
+      <button type="button" data-preset="none">Clear all</button>
+      <button type="button" data-preset="vhs">Worn tape</button>
+      <button type="button" data-preset="desync">Lost sync</button>
+      <button type="button" data-preset="datamosh">Datamosh</button>
+      <button type="button" data-preset="sonify">Hear the picture</button>
+    </div>
+    <div id="fxlist"></div>
+  </section>
+
+  <section class="panel">
+    <h2>Export</h2>
+    <div class="body">
+      <div class="actions">
+        <button class="cta" id="go" disabled>Render corrupted file</button>
+        <button class="ghost" id="save" disabled>Save frame as PNG</button>
+      </div>
+      <div class="prog" id="prog"><div class="bar"><i id="bar"></i></div><p id="ptext"></p></div>
+      <p class="note" id="outnote">Output keeps the same dimensions, frame rate and sample rate, so the Binary Waterfall settings don't change.</p>
+    </div>
+  </section>
+</div>
+</div>
+
+<section class="how">
+  <h2>Why these effects and not a generic byte hexer</h2>
+  <p>In these files every 32-bit word is one pixel byte plus three audio bytes. A generic corruptor hits all four equally, which drowns the picture in noise and the sound in clipping at the same time. Here each effect declares which plane it touches — <code>picture</code>, <code>sound</code> or <code>alignment</code> — so you can wreck the image while the music stays clean, bend the sound while the video plays straight, or knock the row and frame stride sideways to get the rolling, tearing look the format is prone to anyway.</p>
+</section>
+</div>
+
+<script>
+(() => {
+const $ = id => document.getElementById(id);
+const fileIn=$('file'), drop=$('drop'), meta=$('meta'), wIn=$('w'), hIn=$('h'), fpsIn=$('fps'), fmtIn=$('fmt'),
+      flipIn=$('flip'), seedIn=$('seed'), stage=$('stage'), cv=$('cv'), ctl=$('ctl'), playBtn=$('play'),
+      seek=$('seek'), tc=$('tc'), abBtn=$('ab'), go=$('go'), saveBtn=$('save'), prog=$('prog'), bar=$('bar'),
+      ptext=$('ptext'), pvmeta=$('pvmeta'), fxlist=$('fxlist'), outnote=$('outnote');
+
+let file=null, W=64,H=48,FPS=25,NB=1,flip=true, PX=0, FB=0, nFrames=0, bytes=0;
+let ctx=null, img=null, bypass=false, busy=false;
+
+// ---------- effect definitions ----------
+// plane: what it damages. apply(fw, k, rnd, p) mutates a frame's words in place.
+const EFFECTS = [
+  { id:'shift', name:'Byte shift', plane:'alignment', on:false,
+    desc:'Read the file a few bytes early or late. Off a multiple of four, the picture byte lands in an audio slot and the whole image goes to plaid.',
+    params:[{k:'amt',label:'Offset',min:-16,max:16,step:1,val:1,unit:' B'}], stream:true },
+
+  { id:'drift', name:'Sync drift', plane:'alignment', on:false,
+    desc:'Slide the read position a little further every frame — the rolling picture you get from live playback, but on purpose and controllable.',
+    params:[{k:'rows',label:'Rows per second',min:-60,max:60,step:0.5,val:8}], stream:true },
+
+  { id:'noise', name:'Bit rot', plane:'both', on:false,
+    desc:'Flip random bits, choosing which plane rots.',
+    params:[{k:'dens',label:'Density',min:0,max:100,step:0.5,val:6,unit:'%'},
+            {k:'tgt',label:'Target',opts:['picture','sound','both'],val:'picture'}],
+    apply(fw,k,rnd,p){
+      const n=Math.round(fw.length*p.dens/100);
+      for(let i=0;i<n;i++){
+        const j=(rnd()*fw.length)|0;
+        if(p.tgt!=='sound') fw[j]^=1<<((rnd()*8)|0);
+        if(p.tgt!=='picture') fw[j]^=(1<<(8+((rnd()*24)|0)))>>>0;
+      }
+    }},
+
+  { id:'rowshift', name:'Row tearing', plane:'picture', on:false,
+    desc:'Slide rows sideways. Rows wrap, so nothing is lost — it just stops lining up.',
+    params:[{k:'amt',label:'Max shift',min:0,max:64,step:1,val:8,unit:' px'},
+            {k:'mode',label:'Pattern',opts:['random rows','wave','all rows'],val:'random rows'},
+            {k:'prob',label:'Rows affected',min:1,max:100,step:1,val:25,unit:'%'}],
+    apply(fw,k,rnd,p){
+      const rw=W*NB, tmp=new Uint32Array(rw);
+      for(let y=0;y<H;y++){
+        let s;
+        if(p.mode==='wave') s=Math.round(p.amt*Math.sin((y/H*6.28)+k*0.2));
+        else { if(rnd()*100>p.prob) continue; s=Math.round((rnd()*2-1)*p.amt); }
+        if(!s) continue;
+        const off=y*rw, sh=((s*NB)%rw+rw)%rw;
+        for(let i=0;i<rw;i++) tmp[i]=fw[off+((i+sh)%rw)];
+        // keep the audio bytes where they were; only the picture slides
+        for(let i=0;i<rw;i++) fw[off+i]=(fw[off+i]&0xFFFFFF00)|(tmp[i]&0xFF);
+      }
+    }},
+
+  { id:'dropline', name:'Dropped scanlines', plane:'picture', on:false,
+    desc:'Some rows never arrive and the previous row is held instead — the smeared look of a tape losing contact.',
+    params:[{k:'prob',label:'Rows dropped',min:1,max:90,step:1,val:15,unit:'%'}],
+    apply(fw,k,rnd,p){
+      const rw=W*NB;
+      for(let y=1;y<H;y++){
+        if(rnd()*100>p.prob) continue;
+        const off=y*rw, prev=(y-1)*rw;
+        for(let i=0;i<rw;i++) fw[off+i]=(fw[off+i]&0xFFFFFF00)|(fw[prev+i]&0xFF);
+      }
+    }},
+
+  { id:'bits', name:'Bit crush', plane:'picture', on:false,
+    desc:'XOR and rotate the picture byte. Rotating turns smooth gradients into banded posterised zones.',
+    params:[{k:'xor',label:'XOR mask',min:0,max:255,step:1,val:0},
+            {k:'rot',label:'Bit rotate',min:0,max:7,step:1,val:0},
+            {k:'depth',label:'Levels kept',min:1,max:8,step:1,val:8,unit:' bit'}],
+    apply(fw,k,rnd,p){
+      const mask=(0xFF<<(8-p.depth))&0xFF;
+      for(let i=0;i<fw.length;i++){
+        let v=fw[i]&0xFF;
+        if(p.rot) v=((v<<p.rot)|(v>>>(8-p.rot)))&0xFF;
+        v=(v^p.xor)&(p.depth<8?mask:0xFF);
+        fw[i]=(fw[i]&0xFFFFFF00)|v;
+      }
+    }},
+
+  { id:'blocks', name:'Block scramble', plane:'picture', on:false,
+    desc:'Swap rectangular blocks around inside the frame, the way a codec does when its motion vectors are lying.',
+    params:[{k:'size',label:'Block size',min:2,max:32,step:1,val:8,unit:' px'},
+            {k:'count',label:'Swaps',min:1,max:200,step:1,val:20}],
+    apply(fw,k,rnd,p){
+      const S=p.size|0, rw=W*NB;
+      for(let n=0;n<p.count;n++){
+        const ax=(rnd()*Math.max(1,W-S))|0, ay=(rnd()*Math.max(1,H-S))|0;
+        const bx=(rnd()*Math.max(1,W-S))|0, by=(rnd()*Math.max(1,H-S))|0;
+        for(let y=0;y<S;y++) for(let x=0;x<S*NB;x++){
+          const a=(ay+y)*rw+ax*NB+x, b=(by+y)*rw+bx*NB+x;
+          const t=fw[a]&0xFF;
+          fw[a]=(fw[a]&0xFFFFFF00)|(fw[b]&0xFF);
+          fw[b]=(fw[b]&0xFFFFFF00)|t;
+        }
+      }
+    }},
+
+  { id:'chan', name:'Channel slip', plane:'picture', on:false, rgbOnly:true,
+    desc:'Offset the red, green and blue bytes from each other. RGB files only.',
+    params:[{k:'r',label:'Red offset',min:-32,max:32,step:1,val:4,unit:' px'},
+            {k:'b',label:'Blue offset',min:-32,max:32,step:1,val:-4,unit:' px'}],
+    apply(fw,k,rnd,p){
+      if(NB!==3) return;
+      const rw=W*3, src=fw.slice();
+      for(let y=0;y<H;y++) for(let x=0;x<W;x++){
+        const o=y*rw+x*3;
+        const xr=(x+p.r+W)%W, xb=(x+p.b+W)%W;
+        fw[o]  =(fw[o]  &0xFFFFFF00)|(src[y*rw+xr*3]&0xFF);
+        fw[o+2]=(fw[o+2]&0xFFFFFF00)|(src[y*rw+xb*3+2]&0xFF);
+      }
+    }},
+
+  { id:'sonify', name:'Sound into picture', plane:'picture', on:false,
+    desc:'Copy an audio byte over the picture byte. The image becomes a literal picture of the waveform — loud passages go bright.',
+    params:[{k:'mix',label:'Amount',min:0,max:100,step:1,val:60,unit:'%'},
+            {k:'byte',label:'Audio byte',opts:['top (loudest)','middle','bottom (quietest)'],val:'top (loudest)'}],
+    apply(fw,k,rnd,p){
+      const sh=p.byte[0]==='t'?24:p.byte[0]==='m'?16:8, m=p.mix/100;
+      for(let i=0;i<fw.length;i++){
+        const a=((fw[i]>>>sh)&0xFF)^ (sh===24?0x80:0);   // top byte is signed; centre it
+        const v=fw[i]&0xFF;
+        fw[i]=(fw[i]&0xFFFFFF00)|((v*(1-m)+a*m)|0);
+      }
+    }},
+
+  { id:'visify', name:'Picture into sound', plane:'sound', on:false,
+    desc:'Push the picture byte up into the audible part of the sample. You hear the image scanning past — the classic Binary Waterfall screech, mixed under the real audio.',
+    params:[{k:'amt',label:'Loudness',min:0,max:100,step:1,val:35,unit:'%'}],
+    apply(fw,k,rnd,p){
+      const g=p.amt/100;
+      for(let i=0;i<fw.length;i++){
+        const px=(fw[i]&0xFF)-128;
+        const s=(fw[i]|0)>>8;                     // 24-bit signed audio
+        const mixed=Math.max(-8388608,Math.min(8388607,Math.round(s*(1-g)+px*65536*g)));
+        fw[i]=((mixed<<8)>>>0)|(fw[i]&0xFF);
+      }
+    }},
+
+  { id:'mute', name:'Sound damage', plane:'sound', on:false,
+    desc:'Bit-crush and gate the audio without touching a single pixel.',
+    params:[{k:'depth',label:'Bits kept',min:1,max:24,step:1,val:5},
+            {k:'gate',label:'Dropouts',min:0,max:100,step:1,val:0,unit:'%'}],
+    apply(fw,k,rnd,p){
+      const keep=(0xFFFFFF<<(24-p.depth))&0xFFFFFF;
+      const dead=rnd()*100<p.gate;
+      for(let i=0;i<fw.length;i++){
+        let s=(fw[i]>>>8)&0xFFFFFF;
+        s=dead?0:(s&keep);
+        fw[i]=((s<<8)>>>0)|(fw[i]&0xFF);
+      }
+    }},
+
+  { id:'freeze', name:'Frame stutter', plane:'alignment', on:false,
+    desc:'Hold, repeat or jump frames — reads a different frame than the one that should be there.',
+    params:[{k:'prob',label:'Chance per frame',min:1,max:100,step:1,val:20,unit:'%'},
+            {k:'range',label:'Jump distance',min:1,max:60,step:1,val:6,unit:' fr'}],
+    frame:true },
+];
+
+// ---------- UI build ----------
+const state={};
+for(const fx of EFFECTS){ state[fx.id]={on:false}; for(const p of fx.params) state[fx.id][p.k]=p.val; }
+
+function buildUI(){
+  fxlist.innerHTML='';
+  for(const fx of EFFECTS){
+    const el=document.createElement('div'); el.className='fx'; el.id='fx-'+fx.id;
+    const tag=fx.plane==='picture'?'picture':fx.plane==='sound'?'sound':fx.plane==='alignment'?'alignment':'both';
+    el.innerHTML=`<label class="head"><input type="checkbox" data-fx="${fx.id}"><b>${fx.name}</b><span class="tag">${tag}</span></label>
+      <div class="ctrls"><p class="d">${fx.desc}</p></div>`;
+    const c=el.querySelector('.ctrls');
+    for(const p of fx.params){
+      const d=document.createElement('div'); d.className='sl';
+      if(p.opts){
+        d.innerHTML=`<span>${p.label}</span><select data-fx="${fx.id}" data-k="${p.k}">${p.opts.map(o=>`<option${o===p.val?' selected':''}>${o}</option>`).join('')}</select>`;
+      }else{
+        d.innerHTML=`<span>${p.label}</span><output>${p.val}${p.unit||''}</output>
+          <input type="range" min="${p.min}" max="${p.max}" step="${p.step}" value="${p.val}" data-fx="${fx.id}" data-k="${p.k}">`;
+      }
+      c.appendChild(d);
+    }
+    fxlist.appendChild(el);
+  }
+  fxlist.addEventListener('input',e=>{
+    const t=e.target, id=t.dataset.fx; if(!id) return;
+    if(t.type==='checkbox'){ state[id].on=t.checked; $('fx-'+id).classList.toggle('on',t.checked); }
+    else{
+      const p=EFFECTS.find(f=>f.id===id).params.find(q=>q.k===t.dataset.k);
+      state[id][t.dataset.k]= t.tagName==='SELECT'?t.value:+t.value;
+      if(t.tagName!=='SELECT') t.closest('.sl').querySelector('output').textContent=t.value+(p.unit||'');
+    }
+    redraw();
+  });
+}
+function syncUI(){
+  for(const fx of EFFECTS){
+    const box=fxlist.querySelector(`input[type=checkbox][data-fx="${fx.id}"]`);
+    box.checked=state[fx.id].on; $('fx-'+fx.id).classList.toggle('on',state[fx.id].on);
+    for(const p of fx.params){
+      const el=fxlist.querySelector(`[data-fx="${fx.id}"][data-k="${p.k}"]`);
+      el.value=state[fx.id][p.k];
+      if(el.tagName!=='SELECT') el.closest('.sl').querySelector('output').textContent=state[fx.id][p.k]+(p.unit||'');
+    }
+  }
+}
+const PRESETS={
+  none:{},
+  vhs:{dropline:{prob:22},rowshift:{amt:5,mode:'random rows',prob:35},noise:{dens:2,tgt:'picture'},mute:{depth:9,gate:4}},
+  desync:{drift:{rows:14},shift:{amt:1},noise:{dens:1,tgt:'picture'}},
+  datamosh:{blocks:{size:8,count:60},freeze:{prob:35,range:10},bits:{xor:0,rot:0,depth:6}},
+  sonify:{sonify:{mix:85,byte:'top (loudest)'},visify:{amt:60}},
+};
+document.querySelector('.presets').addEventListener('click',e=>{
+  const p=e.target.dataset.preset; if(!p) return;
+  for(const fx of EFFECTS) state[fx.id].on=false;
+  for(const [id,vals] of Object.entries(PRESETS[p]||{})){ state[id].on=true; Object.assign(state[id],vals); }
+  syncUI(); redraw();
+});
+
+// ---------- file intake ----------
+['dragenter','dragover'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.add('over');}));
+['dragleave','drop'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.remove('over');}));
+drop.addEventListener('drop',ev=>{const f=ev.dataTransfer.files[0]; if(f) setFile(f);});
+fileIn.addEventListener('change',()=>{ if(fileIn.files[0]) setFile(fileIn.files[0]); });
+
+function setFile(f){
+  file=f; bytes=f.size;
+  const m=f.name.match(/_(\d+)x(\d+)_(\d+)fps/);
+  if(m){ wIn.value=m[1]; hIn.value=m[2]; fpsIn.value=m[3]; }
+  if(/_rgb/i.test(f.name)) fmtIn.value='3';
+  else if(/_gray/i.test(f.name)) fmtIn.value='1';
+  readGeom();
+  meta.className='meta';
+  meta.textContent=`${f.name} · ${(f.size/1e6).toFixed(1)} MB`+(m?' · size and rate read from the file name':' · name has no size in it, set the fields below by hand');
+  setup();
+}
+function readGeom(){
+  W=Math.max(4,+wIn.value|0); H=Math.max(4,+hIn.value|0); FPS=Math.max(1,+fpsIn.value|0);
+  NB=+fmtIn.value; flip=flipIn.value==='1';
+  PX=W*H*NB; FB=PX*4; nFrames=Math.max(1,Math.floor(bytes/FB));
+}
+[wIn,hIn,fpsIn,fmtIn,flipIn].forEach(el=>el.addEventListener('input',()=>{ if(!file) return; readGeom(); setup(); }));
+
+function setup(){
+  cache.clear();                                      // geometry may have changed
+  const rem=bytes-nFrames*FB;
+  meta.className='meta'+(rem>FB*0.5?' bad':'');
+  pvmeta.textContent=`${W}×${H} · ${NB===3?'rxxxgxxxbxxx':'wxxx'} · ${FPS} fps · ${nFrames} frames`;
+  cv.width=W; cv.height=H; cv.hidden=false; stage.querySelector('.empty')?.remove();
+  ctx=cv.getContext('2d'); img=ctx.createImageData(W,H);
+  ctl.hidden=false; seek.max=nFrames-1; seek.value=0;
+  go.disabled=false; saveBtn.disabled=false;
+  const sr=PX*FPS/2;
+  outnote.textContent=`Output keeps ${W}×${H}, ${FPS} fps and ${sr.toLocaleString()} Hz, so the Binary Waterfall settings stay the same.`;
+  redraw();
+}
+
+// ---------- reading + processing ----------
+const cache=new Map();
+async function readWords(byteStart){
+  const key=byteStart;
+  const hit=cache.get(key);
+  if(hit && hit.length===PX) return new Uint32Array(hit);
+  const start=Math.max(0,Math.min(bytes-1,byteStart));
+  const buf=await file.slice(start,start+FB).arrayBuffer();
+  let u; 
+  if(buf.byteLength===FB && (start%4)===0) u=new Uint32Array(buf);
+  else{ const t=new Uint8Array(FB); t.set(new Uint8Array(buf)); u=new Uint32Array(t.buffer); }
+  const out=new Uint32Array(u);
+  if(cache.size>24) cache.clear();
+  cache.set(key,out);
+  return new Uint32Array(out);                        // fresh copy: effects mutate in place
+}
+function mulberry(a){ return function(){ a|=0; a=a+0x6D2B79F5|0; let t=Math.imul(a^a>>>15,1|a); t=t+Math.imul(t^t>>>7,61|t)^t; return ((t^t>>>14)>>>0)/4294967296; }; }
+
+async function frameWords(k){
+  const seed=(+seedIn.value|0);
+  let src=k;
+  if(state.freeze.on){
+    const r=mulberry(seed^(k*2654435761));
+    if(r()*100<state.freeze.prob) src=Math.max(0,Math.min(nFrames-1,k-1-((r()*state.freeze.range)|0)));
+  }
+  let off=src*FB;
+  if(state.shift.on) off+=state.shift.amt|0;
+  if(state.drift.on) off+=Math.round(state.drift.rows*(k/FPS)*W*NB*4);
+  const fw=await readWords(off);
+  if(bypass) return fw;
+  const rnd=mulberry(seed^(k*2246822519));
+  for(const fx of EFFECTS){
+    if(!fx.apply||!state[fx.id].on) continue;
+    if(fx.rgbOnly&&NB!==3) continue;
+    fx.apply(fw,k,rnd,state[fx.id]);
+  }
+  return fw;
+}
+function paint(fw){
+  const rw=W*NB, px=img.data; let o=0;
+  for(let y=0;y<H;y++){
+    const sy=flip?H-1-y:y, base=sy*rw;
+    for(let x=0;x<W;x++){
+      let R,G,B;
+      if(NB===3){ R=fw[base+x*3]&0xFF; G=fw[base+x*3+1]&0xFF; B=fw[base+x*3+2]&0xFF; }
+      else R=G=B=fw[base+x]&0xFF;
+      px[o++]=R; px[o++]=G; px[o++]=B; px[o++]=255;
+    }
+  }
+  ctx.putImageData(img,0,0);
+}
+let drawing=false, pending=false;
+async function redraw(){
+  if(!file||!ctx) return;
+  if(drawing){ pending=true; return; }
+  drawing=true;
+  const k=+seek.value;
+  tc.textContent=`${k+1} / ${nFrames}`;
+  try{ paint(await frameWords(k)); }catch(e){ console.error(e); }
+  drawing=false;
+  if(pending){ pending=false; redraw(); }
+}
+seek.addEventListener('input',()=>{ stopPlay(); redraw(); });
+seedIn.addEventListener('input',redraw);
+abBtn.addEventListener('mousedown',()=>{bypass=true;redraw();});
+['mouseup','mouseleave'].forEach(e=>abBtn.addEventListener(e,()=>{bypass=false;redraw();}));
+abBtn.addEventListener('click',e=>e.preventDefault());
+
+let playing=false,raf=null,lastT=0,acc=0;
+playBtn.addEventListener('click',()=>playing?stopPlay():startPlay());
+function startPlay(){ playing=true; playBtn.textContent='Pause'; lastT=performance.now(); acc=+seek.value; raf=requestAnimationFrame(tick); }
+function stopPlay(){ playing=false; playBtn.textContent='Play'; if(raf)cancelAnimationFrame(raf); raf=null; }
+async function tick(t){
+  if(!playing) return;
+  acc+=(t-lastT)/1000*FPS; lastT=t;
+  if(acc>=nFrames) acc=0;
+  seek.value=Math.floor(acc);
+  await redraw();
+  if(playing) raf=requestAnimationFrame(tick);
+}
+
+// ---------- export ----------
+saveBtn.addEventListener('click',()=>{
+  const a=document.createElement('a');
+  a.download=(file?file.name.replace(/\.[^.]+$/,''):'frame')+`_f${(+seek.value+1)}.png`;
+  a.href=cv.toDataURL('image/png'); a.click();
+});
+go.addEventListener('click',render);
+async function render(){
+  if(busy) return;
+  busy=true; go.disabled=true; stopPlay(); prog.classList.add('on');
+  const name=file.name.replace(/\.[^.]+$/,'')+'_corrupt.bwv';
+  const t0=performance.now();
+  let writer=null, parts=null;
+  try{
+    if(window.showSaveFilePicker){
+      try{
+        const fh=await window.showSaveFilePicker({suggestedName:name,types:[{description:'Binary Waterfall video',accept:{'application/octet-stream':['.bwv']}}]});
+        writer=await fh.createWritable();
+      }catch(e){ if(e.name==='AbortError'){ throw new Error('cancelled'); } }
+    }
+    if(!writer) parts=[];
+    for(let k=0;k<nFrames;k++){
+      const fw=await frameWords(k);
+      const buf=fw.buffer.slice(0);
+      if(writer) await writer.write(buf); else parts.push(buf);
+      if(k%10===0||k===nFrames-1){
+        const el=(performance.now()-t0)/1000, eta=el/(k+1)*(nFrames-k-1);
+        ptext.textContent=`Frame ${k+1} / ${nFrames} · ${eta>1?Math.round(eta)+' s left':'almost done'}`;
+        bar.style.width=((k+1)/nFrames*100).toFixed(1)+'%';
+        await new Promise(r=>requestAnimationFrame(r));
+      }
+    }
+    if(writer){ await writer.close(); ptext.textContent=`Saved — ${nFrames} frames in ${((performance.now()-t0)/1000).toFixed(1)} s`; }
+    else{
+      const blob=new Blob(parts,{type:'application/octet-stream'});
+      const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name; a.click();
+      setTimeout(()=>URL.revokeObjectURL(a.href),10000);
+      ptext.textContent=`Done — ${nFrames} frames in ${((performance.now()-t0)/1000).toFixed(1)} s`;
+    }
+    bar.style.width='100%';
+  }catch(e){
+    ptext.textContent = e.message==='cancelled' ? 'Cancelled.' : 'Render failed: '+(e.message||e);
+    if(e.message!=='cancelled') console.error(e);
+  }finally{ busy=false; go.disabled=false; }
+}
+
+buildUI(); syncUI();
+})();
+</script>
+</body>
+</html>
